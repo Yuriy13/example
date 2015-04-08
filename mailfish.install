@@ -1,0 +1,98 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the mailfish module.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+ 
+function mailfish_schema() {
+  $schema['mailfish'] = array(
+    'description' => 'Table to Mailfish module of hook_schema() during module installation.',
+    'fields' => array(
+      'sid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The primary key of the module data.',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'length' => 8,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The id of user, which created the subscription.',
+      ),
+      'email' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The email of subscriber.',
+      ),
+    ),
+    'primary key' => array('sid', 'uid'),
+  );
+  $schema['mailfish_nodes'] = array(
+    'description' => 'Table to Mailfish module of hook_schema() during module installation.',
+    'fields' => array(
+      'sid' => array(
+        'type' => 'int',
+        'length' => 8,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The id of subscription, which created user.',
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'length' => 8,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The node id, which user signed up to.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'length' => 11,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The created date, to track the timestamp when the user subscribed to node.',
+      ),
+    ),
+    'indexes' => array(
+      'uid' => array('sid'),
+    ), 
+  );
+  $schema['mailfish_types'] = array(
+    'description' => 'Table to Mailfish module of hook_schema() during module installation.',
+    'fields' => array(
+      'sid' => array(
+        'type' => 'int',
+        'length' => 8,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The id of subscription, which created user.',
+      ),
+      'ctype' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The content type, which user signed up to.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'length' => 11,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'The created date, to track the timestamp when the user subscribed to content type.',
+      ),
+    ),
+    'indexes' => array(
+      'uid' => array('sid'),
+    ), 
+  );
+  return $schema;
+}

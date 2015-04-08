@@ -1,0 +1,518 @@
+<?php
+/**
+ * @file
+ * Allows administrators to manage subscribers emails.
+ */
+ 
+/**
+ * Implements hook_help().
+ */
+function mailfish_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#mailfish':
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('The Mailfish module');
+      return $output;
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function mailfish_permission() {
+  return array(
+    'administer mailfish settings' =>  array(
+      'title' => t('Administer mailfish settings'),
+    ),
+    'view mailfish subscriptions' =>  array(
+      'title' => t('View mailfish subscriptions'),
+    ),
+    'view mailfish subscribe' =>  array(
+      'title' => t('View mailfish subscribe'),
+    ),
+  );
+}
+
+/**
+* Implements hook_block_info().
+*/
+function mailfish_block_info() {
+  $blocks['mailfish'] = array(
+    'info' => t('Mailfish'),
+    'status' => TRUE,
+    'region' => 'sidebar_second',
+    'weight' => 0,
+    'visibility' => 0,
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function mailfish_block_view($delta = '') {
+  $block['title']   = 'Mailfish Subscription';
+  $form = drupal_get_form('mailfish_form');
+  $block['content'] = drupal_render($form);
+  return $block;
+} 
+
+/**
+ * Implements hook_menu().
+ */
+
+function mailfish_menu() {
+  $items = array();
+  // Mailfish menu settings
+  $items['admin/config/content/mailfish'] = array(
+    'title'            => t('Mailfish settings'),
+    'description'      => t('Mailfish module settings.'),
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('mailfish_form_admin'),
+    'access arguments' => array('administer mailfish settings'),
+    'file'             => 'mailfish.admin.inc',
+    'file path'        => drupal_get_path('module', 'mailfish'),
+  );
+  
+  $items['admin/reports/mailfish'] = array(
+    'title'            => t('Mailfish report'),
+    'description'      => t('Mailfish module report.'),
+    'page callback'    => 'mailfish_report_page',
+    'page arguments'   => array('mailfish_report_page'),
+    'access arguments' => array('view mailfish subscriptions'),
+    'file'             => 'mailfish.report.inc',
+    'file path'        => drupal_get_path('module', 'mailfish'),
+  );
+  
+  $items['node/%/signup'] = array(
+    'title' => 'Subscriptions',
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('mailfish_form'),
+    'access callback'  => 'mailfish_node_access',
+    'access arguments' => array('view mailfish subscribe'),
+    'weight'           => 10,
+    'type'             => MENU_LOCAL_TASK,
+  );
+  
+  $items['admin/mailfish/%/node/%/delete'] = array(
+    'title'            => 'Mailfish module',
+    'description'      => 'Mailfish module - Delete element',
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('mailfish_delete_form'),
+    'access arguments' => array('administer mailfish settings'),
+    'file'             => 'mailfish.report.inc',
+    'file path'        => drupal_get_path('module', 'mailfish'),
+  );
+
+  return $items;
+}
+
+
+/**
+ * Form acces handler for mailfish_form().
+ *
+ * @see mailfish_node_access()
+ */
+function mailfish_node_access($theme) {
+  if ((arg(0) == 'node') && ($nid = filter_var(arg(1), FILTER_SANITIZE_NUMBER_INT))) {
+    $node = node_load($nid);
+    
+    if ($node) {
+      $acces_types = variable_get('mailfish_ntypes', array());
+      if ($acces_types[$node->type] && user_access('view mailfish subscribe')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Default form elements for mailfish_form().
+ *
+ * @see mailfish_add_default_elements_form()
+ */
+function mailfish_add_default_elements_form($form) {
+  if ((arg(0) != 'node') || (!$nid = filter_var(arg(1), FILTER_SANITIZE_NUMBER_INT))) {
+    return false;
+  }
+  $node       = node_load($nid);
+  $mtypes     = variable_get('mailfish_ntypes', array());
+  $html_prefix = '<div class="form-item" style="border: 2px solid #f00; padding: 0.5em;"><strong>%s</strong></div>';
+  
+  $form_default = array(
+    'action' => array(
+      '#type' => 'hidden',
+    ),
+    'content_type' => array(
+      '#type'  => 'hidden',
+      '#value' => $node->type,
+    ),
+    'subscription_type' => array(
+      '#type'  => 'hidden',
+      '#value' => 'type',
+    ),
+    'subscription_id' => array(
+      '#type' => 'hidden',
+    ),
+    'submit' => array(
+      '#type' => 'submit',
+    ),
+  );
+
+  if (isset($mtypes['submit_by_node_' . $node->type]) && $mtypes['submit_by_node_' . $node->type]) {
+    $form_default['subscription_type']['#value'] = 'node';
+  }
+  
+  if (!isset($form['#prefix'])) {
+    $form_default['#prefix'] = sprintf($html_prefix, t("You'll be subscribed for all nodes of @type", array('@type' => $node->type)));
+    if (isset($mtypes['submit_by_node_' . $node->type]) && $mtypes['submit_by_node_' . $node->type]) {
+      $form_default['#prefix'] = sprintf($html_prefix, t("You'll be subscribed for current node"));
+    }
+  }
+  $form_new['mailfish_form'] = array_merge_recursive($form, $form_default);
+  
+  return $form_new;
+}
+
+
+/**
+ * Form handler for mailfish_form().
+ *
+ * @see mailfish_form()
+ */
+function mailfish_form($form) {
+  global $user;
+  if ((arg(0) != 'node') || (!$nid = filter_var(arg(1), FILTER_SANITIZE_NUMBER_INT))) {
+    return false;
+  }
+  
+  $node   = node_load($nid);
+  $sid    = 0;
+  $mtypes = variable_get('mailfish_ntypes', array());
+  
+  $result = db_select('mailfish', 'm')
+    ->fields('m', array('sid'))
+    ->condition('uid', $user->uid, '=')
+    ->execute()
+    ->fetchAssoc();
+
+  if ($result) {
+    $sid = $result['sid'];
+  }
+
+  $form['subscription_id']['#value'] = $sid;
+  
+  $result = db_select('mailfish_nodes', 'm')
+    ->fields('m', array('nid'))
+    ->condition('nid', $nid, '=')
+    ->condition('sid', $sid, '=')
+    ->execute()
+    ->fetch();
+    
+  if (isset($mtypes['submit_by_node_' . $node->type]) && !$mtypes['submit_by_node_' . $node->type] && !$result && $sid) {
+    $result = db_select('mailfish_types', 'm')
+      ->fields('m', array('sid'))
+      ->condition('ctype', $node->type, '=')
+      ->condition('sid', $sid, '=')
+      ->execute()
+      ->fetch();
+  }
+  
+  if ($result) {
+    $form['nid'] = array(
+      '#type'  => 'hidden',
+      '#value' => $nid,
+    );
+    $form['action']['#value'] = 'unsubscribe';
+    $form['submit']['#value'] = t('Unsubscribe');
+    $form['#prefix']          = '';
+    $form = mailfish_add_default_elements_form($form);
+    
+    return $form;
+  }
+  
+  $form['use_default_email'] = array(
+    '#type'  => 'checkbox',
+    '#title' => t('Use default email.'),
+  );
+  $form['default_email'] = array(
+    '#type'  => 'hidden',
+    '#value' => $user->mail,
+  );
+  $form['email_box'] = array(
+    '#type' => 'container',
+    '#states' => array(
+      // Hide the settings when the cancel notify checkbox is disabled.
+      'invisible' => array(
+        ':input[name="use_default_email"]' => array('checked' => TRUE),
+      ),
+    ),
+    'email' => array(
+      '#type'     => 'textfield',
+      '#title'    => 'Email:',
+      '#attributes' => array(
+        'style' => array(
+          'width: 100%;',
+        ),
+      ),
+    ),
+  );
+  $form['captcha'] = array(
+    '#type'         => 'captcha',
+    '#captcha_type' => 'image_captcha/Image',
+  );
+  $form['submit']['#value'] = t('Subscribe');
+  $form = mailfish_add_default_elements_form($form);
+  
+  return $form;
+}
+
+/**
+ * Form submission handler for mailfish_form().
+ *
+ * @see mailfish_form_validate()
+ */
+function mailfish_form_validate($form, &$form_state) {
+  if ((arg(0) != 'node') || (!$nid = filter_var(arg(1), FILTER_SANITIZE_NUMBER_INT))) {
+    return false;
+  }
+  
+  global $user;
+  $sid    = $form_state['values']['subscription_id'];
+  $stype  = $form_state['values']['subscription_type'];
+  $ctype  = $form_state['values']['content_type'];
+  $action = $form_state['values']['action'];
+  
+  if ($action == 'unsubscribe') {
+    if ($stype == 'type') {
+      $result = db_delete('mailfish_types')
+        ->condition('sid', $sid)
+        ->condition('ctype', $ctype)
+        ->execute();
+    }
+    
+    $result = db_delete('mailfish_nodes')
+      ->condition('nid', $nid)
+      ->condition('sid', $sid)
+      ->execute();
+
+    $result = db_select('mailfish_nodes', 'm')
+      ->fields('m')
+      ->condition('sid', $sid)
+      ->execute()
+      ->fetch();
+    
+    if (!$result) {
+      $result = db_delete('mailfish')
+        ->condition('sid', $sid)
+        ->execute();
+
+      $result = db_delete('mailfish_types')
+        ->condition('sid', $sid)
+        ->execute();
+    }
+    
+    drupal_goto('node/' . $nid);
+  }
+ 
+  $email = $form_state['values']['email'];
+ 
+  if (!valid_email_address($email) && !$form_state['values']['use_default_email']) {
+    form_set_error('[submitted][email]', t('The email address appears to be invalid'));
+    return false;
+  }
+}
+
+/**
+ * Form submission handler for mailfish_form().
+ *
+ * @see mailfish_form_submit()
+ */
+function mailfish_form_submit($form, &$form_state) {
+  if ((arg(0) != 'node') || (!$nid = filter_var(arg(1), FILTER_SANITIZE_NUMBER_INT))) {
+    return false;
+  }
+  global $user;
+  $sid    = $form_state['values']['subscription_id'];
+  $action = $form_state['values']['action'];
+  $node   = node_load($nid);
+  
+  if ($form_state['values']['use_default_email']) {
+    $email = $form_state['values']['default_email'];
+  } else {
+    $email = $form_state['values']['email'];
+  }
+  
+  if (!$sid) {
+    $sid = db_insert('mailfish') // Add element to the table mailfish {}
+      ->fields(array(
+        'uid'   => $user->uid,
+        'email' => $email,
+      ))
+      ->execute();
+  }
+  
+  $result = db_select('mailfish', 'm')
+    ->fields('m')
+    ->condition('email', $email)
+    ->condition('sid', $sid)
+    ->execute()
+    ->fetch();
+  
+  if (!$result) {
+    drupal_set_message(t('You already use another email!'), 'error');
+    return false;
+  }
+    
+  $result = db_select('mailfish_types', 'm')
+    ->fields('m')
+    ->condition('ctype', $node->type)
+    ->condition('sid', $sid)
+    ->execute()
+    ->fetch();
+
+  if (!$result) {
+    $tid = db_insert('mailfish_types') // Add element to the table mailfish_types {}
+      ->fields(array(
+        'sid'     => $sid,
+        'ctype'   => $node->type,
+        'created' => REQUEST_TIME,
+      ))
+      ->execute();
+  }
+    
+  $nid = db_merge('mailfish_nodes') // Add element to the table mailfish_nodes {}
+    ->key(array('sid' => $sid, 'nid' => $nid))
+    ->fields(array(
+      'sid'     => $sid,
+      'nid'     => $nid,
+      'created' => REQUEST_TIME,
+    ))
+    ->execute();
+    
+  if ($nid) {
+    drupal_set_message(t('Thank you for subscription!'));
+     
+    $params = array(
+      'subject' => $node->title,
+      'body'    => l($node->title, 'node/' . $node->nid, array('absolute' => TRUE)),
+    );
+    drupal_mail('mailfish', 'subscribe', $email, language_default(), $params);
+
+    watchdog('mailfish subscriptions', 'User ' . $user->name . ' subscribed to Node ID - ' . $nid);
+  } else {
+    drupal_set_message(t('Subscription Error! Please contact administrator.'));
+  }
+}
+
+/**
+ * Form submission handler for mailfish_form().
+ *
+ * @see mailfish_mail()
+ */
+function mailfish_mail($key,&$message,$params) {
+  $message['headers'] = array(
+    'MIME-Version' => '1.0',
+    'Content-Type' => 'text/html; charset=UTF-8; format=flowed',
+    'Content-Transfer-Encoding' => '8Bit',
+    'X-Mailer'     => 'Drupal',
+    'Return-Path'  => '',
+  );
+
+  switch ($key) {
+    case 'subscribe':
+      $message['subject'] = t('Subscription of @subject', array('@subject' => $params['subject'])); 
+      $message['body'][]  = t('You subscribed to @link', array('@link' => $params['body']));
+      break;
+    case 'update':
+      $message['subject'] = t('Update of @subject', array('@subject' => $params['subject']));
+      $message['body'][]  = t('Node @link updated!', array('@link' => $params['body']['link']));
+      $message['body'][]  = '<br><br>';
+      $message['body'][]  = t('Changes: @changes', array('@changes' => $params['body']['changes']));
+      break;
+  }
+}
+
+/**
+ * Implements mailfish_is_node_changed().
+ * Check, what changed in node
+ */
+function mailfish_is_node_changed($node, $old_node) {
+  module_load_include('inc', 'diff', 'diff.pages');
+  $is_changed = FALSE;
+  $context = array(
+    'entity_type' => 'node',
+    'states'      => array('raw'),
+    'view_mode'   => 'diff_standard',
+  );
+  $node_diffs = diff_compare_entities($old_node, $node, $context);
+  
+  foreach ($node_diffs as $node_diff) {
+    if ($node_diff['#states']['raw']['#old'] != $node_diff['#states']['raw']['#new']) {
+      $is_changed = TRUE;
+      break;
+    }
+  }
+  if ($is_changed) return true;
+  return false;
+}
+
+/**
+ * Implements hook_node_update().
+ */
+function mailfish_node_update($node) {
+  global $user;
+  $mtypes     = variable_get('mailfish_ntypes', array());
+  $old_node   = clone node_load($node->nid);
+  $is_changed = mailfish_is_node_changed($node, $old_node);
+  
+  if ($is_changed) {
+    $rows = _diff_body_rows($old_node, $node);
+    $header = _diff_default_header(t('Original'), t('Changes'));
+    $changes = theme('table__diff__preview', array(
+      'header'     => $header,
+      'rows'       => $rows,
+      'attributes' => array('style' => 'border: 1px solid #888; margin-top: 15px;'),
+      'colgroups'  => array(),
+      'sticky'     => FALSE,
+    ));
+    
+    $result_nodes = db_select('mailfish_nodes', 'm')
+      ->fields('m', array('sid'))
+      ->condition('nid', $node->nid)
+      ->execute()
+      ->fetchAllAssoc('sid');
+    
+    if (isset($mtypes['submit_by_node_' . $node->type]) && !$mtypes['submit_by_node_' . $node->type] && !$result_nodes) {  
+      $result_nodes = db_select('mailfish_types', 'm')
+        ->fields('m', array('sid'))
+        ->condition('ctype', $node->type, '=')
+        ->execute()
+        ->fetchAllAssoc('sid');
+    }
+    
+    $result = array();
+    if ($result_nodes) {
+      $subscribers_id = array_keys($result_nodes);
+      $result = db_select('mailfish', 'm')
+        ->fields('m', array('email'))
+        ->condition('sid', $subscribers_id, 'IN')
+        ->execute()
+        ->fetchAll();
+    }
+    
+    foreach ($result as $element) {
+      $params = array(
+        'subject' => $node->title,
+        'body'    => array(
+          'link'    => l($node->title, 'node/' . $node->nid, array('absolute' => TRUE)),
+          'changes' => $changes,
+        )
+      );
+      drupal_mail('mailfish', 'update', $element->email, language_default(), $params);
+    }
+  }
+}

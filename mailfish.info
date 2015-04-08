@@ -1,0 +1,13 @@
+name = Mailfish
+description = Allows administrators to manage subscribers emails.
+package = Other
+version = 7.x-dev
+core = 7.x
+configure = admin/config/content/mailfish
+
+files[] = mailfish.module
+files[] = mailfish.admin.inc
+files[] = mailfish.report.inc
+
+dependencies[] = diff
+dependencies[] = image_captcha
